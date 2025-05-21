@@ -2,130 +2,101 @@
 <html>
 <head>
   <meta charset="UTF-8">
-  <title>Máy Cấp Thuốc MQTT</title>
-  <script src="https://unpkg.com/paho-mqtt/mqtt.min.js"></script>
+  <title>Lịch cấp thuốc</title>
   <style>
-    body { font-family: sans-serif; max-width: 500px; margin: auto; padding: 20px; }
-    input, button, select { width: 100%; padding: 10px; margin: 10px 0; font-size: 1em; }
-    .box { border: 1px solid #ccc; padding: 15px; border-radius: 5px; margin-bottom: 20px; }
-    #log { white-space: pre-wrap; background: #f9f9f9; padding: 10px; border-radius: 5px; height: 120px; overflow-y: auto; }
+    body { font-family: Arial; margin: 20px; background-color: #f2f2f2; }
+    h2 { color: #333; }
+    input, button {
+      margin: 5px; padding: 8px; border-radius: 4px;
+      border: 1px solid #ccc;
+    }
+    .section { margin-bottom: 20px; }
+    #response { color: green; font-weight: bold; }
   </style>
+  <script src="https://unpkg.com/paho-mqtt/mqttws31.min.js"></script>
 </head>
 <body>
-  <h2>💊 Máy Cấp Thuốc ESP32 - HiveMQ</h2>
+  <h2>💊 Gửi lịch cấp thuốc</h2>
 
-  <div class="box">
-    <h3>📤 Gửi lịch mới</h3>
-    <input id="time" placeholder="Thời gian (HH:MM)">
-    <input id="slot" type="number" placeholder="Khay (0-15)">
-    <input id="pills" type="number" placeholder="Số viên thuốc">
-    <button onclick="sendSchedule()">Gửi lịch</button>
+  <div class="section">
+    <label>⏰ Giờ (HH:MM): </label>
+    <input type="text" id="time" placeholder="07:30">
+    <label>📦 Khe thuốc (slot): </label>
+    <input type="number" id="slot" min="0" max="15">
+    <label>💊 Số viên: </label>
+    <input type="number" id="pills" min="1">
+    <button onclick="sendSchedule()">📤 Gửi lịch</button>
   </div>
 
-  <div class="box">
-    <h3>🗑 Xoá lịch</h3>
-    <input id="deleteTime" placeholder="Thời gian cần xoá (HH:MM)">
-    <button onclick="deleteSchedule()">Xoá lịch</button>
+  <div class="section">
+    <label>⏰ Xoá lịch theo giờ: </label>
+    <input type="text" id="deleteTime" placeholder="07:30">
+    <button onclick="deleteSchedule()">🗑 Xoá lịch</button>
   </div>
 
-  <div class="box">
-    <h3>📋 Danh sách lịch hiện tại</h3>
-    <button onclick="requestSchedule()">🔄 Yêu cầu ESP32 gửi danh sách</button>
-    <pre id="scheduleList">[chưa có dữ liệu]</pre>
+  <div class="section">
+    <button onclick="getSchedules()">📋 Xem danh sách lịch</button>
+    <pre id="scheduleList" style="background:#fff; padding:10px;"></pre>
   </div>
 
-  <div class="box">
-    <h3>🔔 Phản hồi từ ESP32</h3>
-    <div id="log">Chờ ESP32 phản hồi...</div>
-  </div>
-
-  <p id="status">🔌 Đang kết nối MQTT...</p>
+  <div id="response"></div>
 
   <script>
-    const clientID = "webform-" + Math.random().toString(16).substr(2, 8);
-    const host = "4279ede62379437b88de9a4dd915ce6e.s1.eu.hivemq.cloud";
-    const port = 8884;
+    const clientID = "client-" + Math.random().toString(16).substr(2, 8);
+    const client = new Paho.MQTT.Client("broker.hivemq.com", 8000, clientID);
 
-    const client = new Paho.MQTT.Client(host, port, "/mqtt", clientID);
-
-    client.onConnectionLost = (response) => {
-      document.getElementById("status").textContent = "❌ Mất kết nối MQTT";
+    client.onConnectionLost = function(response) {
+      document.getElementById("response").innerText = "❌ Mất kết nối MQTT!";
     };
 
-    client.onMessageArrived = (message) => {
-      console.log("Message:", message);
-      const topic = message.destinationName;
-      const payload = message.payloadString;
-
-      if (topic === "pill_dispenser/1/ack" || topic === "pill_dispenser/1/delete_ack") {
-        log(`[✅ ESP32]: ${payload}`);
+    client.onMessageArrived = function(message) {
+      if (message.destinationName.includes("ack")) {
+        document.getElementById("response").innerText = "✅ " + message.payloadString;
       }
-
-      if (topic === "pill_dispenser/1/status") {
-        try {
-          const data = JSON.parse(payload);
-          const schedules = data.schedules || [];
-          let html = "";
-          schedules.forEach(s => {
-            html += `⏰ ${s.time} | Slot ${s.slot} | 💊 ${s.pills} viên\n`;
-          });
-          document.getElementById("scheduleList").textContent = html || "Không có lịch nào.";
-        } catch (e) {
-          log("⚠️ JSON lỗi từ ESP32");
-        }
+      if (message.destinationName.includes("delete_ack")) {
+        document.getElementById("response").innerText = "🗑 " + message.payloadString;
+      }
+      if (message.destinationName.includes("status")) {
+        document.getElementById("scheduleList").innerText = message.payloadString;
       }
     };
 
     client.connect({
-      userName: "Access",
-      password: "Yes123456",
-      useSSL: true,
-      onSuccess: () => {
-        document.getElementById("status").textContent = "✅ Đã kết nối MQTT!";
+      onSuccess: function() {
+        document.getElementById("response").innerText = "✅ Đã kết nối MQTT!";
         client.subscribe("pill_dispenser/1/ack");
         client.subscribe("pill_dispenser/1/delete_ack");
         client.subscribe("pill_dispenser/1/status");
-        log("🟢 MQTT đã sẵn sàng");
       },
-      onFailure: (err) => {
-        document.getElementById("status").textContent = "❌ Lỗi kết nối MQTT: " + err.errorMessage;
-      }
+      onFailure: function() {
+        document.getElementById("response").innerText = "❌ Kết nối MQTT thất bại!";
+      },
+      useSSL: false
     });
 
-    function log(msg) {
-      const logDiv = document.getElementById("log");
-      logDiv.textContent += msg + "\n";
-      logDiv.scrollTop = logDiv.scrollHeight;
-    }
-
     function sendSchedule() {
-      const time = document.getElementById("time").value;
-      const slot = parseInt(document.getElementById("slot").value);
-      const pills = parseInt(document.getElementById("pills").value);
-      if (!time || isNaN(slot) || isNaN(pills)) {
-        alert("Điền đầy đủ thông tin!");
-        return;
-      }
-      const payload = JSON.stringify({ time, slot, pills });
-      client.send("pill_dispenser/1/schedule", payload);
-      log(`📤 Gửi lịch: ${time} - slot ${slot} - ${pills} viên`);
+      const msg = {
+        time: document.getElementById("time").value,
+        slot: parseInt(document.getElementById("slot").value),
+        pills: parseInt(document.getElementById("pills").value)
+      };
+      const payload = new Paho.MQTT.Message(JSON.stringify(msg));
+      payload.destinationName = "pill_dispenser/1/schedule";
+      client.send(payload);
     }
 
     function deleteSchedule() {
       const time = document.getElementById("deleteTime").value;
-      if (!time) {
-        alert("Nhập thời gian cần xoá");
-        return;
-      }
-      const payload = JSON.stringify({ time });
-      client.send("pill_dispenser/1/delete_schedule", payload);
-      log(`🗑 Gửi yêu cầu xoá lịch: ${time}`);
+      const msg = { time: time };
+      const payload = new Paho.MQTT.Message(JSON.stringify(msg));
+      payload.destinationName = "pill_dispenser/1/delete_schedule";
+      client.send(payload);
     }
 
-    function requestSchedule() {
-      // Gửi yêu cầu riêng nếu bạn muốn ESP32 gửi lại trạng thái
-      client.send("pill_dispenser/1/get_schedule", "request");
-      log("🔄 Đã yêu cầu ESP32 gửi danh sách lịch.");
+    function getSchedules() {
+      const msg = new Paho.MQTT.Message("{}");
+      msg.destinationName = "pill_dispenser/1/get_schedule";
+      client.send(msg);
     }
   </script>
 </body>
